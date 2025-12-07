@@ -1,2 +1,17 @@
-:WQ
 
+
+# Visual Studio / IDE files
+.vs/
+*.user
+*.suo
+
+# Build / output folders
+bin/
+obj/
+
+# Other caches
+*.cache
+*.pdb
+*.dll
+*.exe
+*.log
