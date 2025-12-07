@@ -1,158 +1,112 @@
-//var builder = WebApplication.CreateBuilder(args);
-
-//// Add services to the container.
-
-//builder.Services.AddControllers();
-//// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-//builder.Services.AddEndpointsApiExplorer();
-//builder.Services.AddSwaggerGen();
-
-//var app = builder.Build();
-
-//// Configure the HTTP request pipeline.
-//if (app.Environment.IsDevelopment())
-//{
-//    app.UseSwagger();
-//    app.UseSwaggerUI();
-//}
-
-//app.UseHttpsRedirection();
-
-//app.UseAuthorization();
-
-//app.MapControllers();
-
-//app.Run();
-// Program.cs - Updated with proper DI configuration
+﻿// Program.cs - UPDATED WITH PROPER DI
 using Microsoft.EntityFrameworkCore;
 using RedisCrudAPI.Data;
+using RedisCrudAPI.Repositories;
+using RedisCrudAPI.Services;
 using RedisCrudAPI.Settings;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// Configure Serilog for logging
+// Configure Serilog
 Log.Logger = new LoggerConfiguration()
-    .ReadFrom.Configuration(builder.Configuration)
-    .Enrich.FromLogContext()
+    .MinimumLevel.Information()
+    .WriteTo.Console(outputTemplate: "[{Timestamp:HH:mm:ss} {Level:u3}] {Message:lj}{NewLine}{Exception}")
     .CreateLogger();
 
 builder.Host.UseSerilog();
 
-// Add services to the container
-builder.Services.AddControllers();
-
-// Learn more about configuring Swagger/OpenAPI at https://aka.ms/aspnetcore/swashbuckle
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen(c =>
-{
-    c.SwaggerDoc("v1", new Microsoft.OpenApi.Models.OpenApiInfo
+// Add services
+builder.Services.AddControllers()
+    .AddJsonOptions(options =>
     {
-        Title = "Redis CRUD API",
-        Version = "v1",
-        Description = "ASP.NET Core Web API with Redis Caching and SQL Server"
+        options.JsonSerializerOptions.PropertyNamingPolicy = System.Text.Json.JsonNamingPolicy.CamelCase;
+        options.JsonSerializerOptions.WriteIndented = true;
     });
-});
 
-// ?? CRITICAL: Configure DbContext with SQL Server
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+// ✅ IMPORTANT: Get connection strings first
+var sqlConnectionString = builder.Configuration.GetConnectionString("DefaultConnection");
+var redisConnectionString = builder.Configuration.GetConnectionString("Redis");
+
+if (string.IsNullOrEmpty(sqlConnectionString))
+    throw new InvalidOperationException("SQL Server connection string is not configured");
+
+Console.WriteLine($"SQL Connection: {sqlConnectionString}");
+Console.WriteLine($"Redis Connection: {redisConnectionString}");
+
+// ✅ Configure SQL Server (FIXED: AddDbContext)
 builder.Services.AddDbContext<AppDbContext>(options =>
-{
-    options.UseSqlServer(
-        builder.Configuration.GetConnectionString("DefaultConnection"),
-        sqlOptions =>
-        {
-            sqlOptions.EnableRetryOnFailure(
-                maxRetryCount: 5,
-                maxRetryDelay: TimeSpan.FromSeconds(30),
-                errorNumbersToAdd: null);
-        });
+    options.UseSqlServer(sqlConnectionString));
 
-    // Enable sensitive data logging only in development
-    if (builder.Environment.IsDevelopment())
+// ✅ Configure Redis
+if (!string.IsNullOrEmpty(redisConnectionString))
+{
+    builder.Services.AddStackExchangeRedisCache(options =>
     {
-        options.EnableSensitiveDataLogging();
-        options.EnableDetailedErrors();
-    }
-});
-
-// Configure Redis Caching
-builder.Services.AddStackExchangeRedisCache(options =>
+        options.Configuration = redisConnectionString;
+        options.InstanceName = "RedisCrud_";
+    });
+}
+else
 {
-    options.Configuration = builder.Configuration.GetConnectionString("Redis");
-    options.InstanceName = builder.Configuration["RedisSettings:InstanceName"] ?? "RedisCrud_";
-});
+    Console.WriteLine("⚠️ Redis connection string not found. Using in-memory cache instead.");
+    builder.Services.AddDistributedMemoryCache();
+}
 
-// Configure Redis Settings
+// ✅ Configure Redis Settings
 builder.Services.Configure<RedisSettings>(
     builder.Configuration.GetSection("RedisSettings"));
 
-// Register Services with Dependency Injection
-//builder.Services.AddScoped<IRedisService, RedisService>();
+// ✅ REGISTER ALL SERVICES IN CORRECT ORDER
+builder.Services.AddScoped<IRedisService, RedisService>();
+builder.Services.AddAutoMapper(AppDomain.CurrentDomain.GetAssemblies()); // ✅ FIXED
+builder.Services.AddScoped(typeof(IRepository<>), typeof(CachedRepository<>));
+builder.Services.AddScoped<IProductService, ProductService>();
 
-// Register AutoMapper
-builder.Services.AddAutoMapper(typeof(Program));
-
-// Register Repositories
-//builder.Services.AddScoped(typeof(IRepository<>), typeof(CachedRepository<>));
-
-// Register Application Services
-//builder.Services.AddScoped<IProductService, ProductService>();
-
-// Add Health Checks
-//builder.Services.AddHealthChecks()
- //   .AddSqlServer(builder.Configuration.GetConnectionString("DefaultConnection")!)
- //   .AddRedis(builder.Configuration.GetConnectionString("Redis")!);
-
-// Add CORS policy
-builder.Services.AddCors(options =>
-{
-    options.AddPolicy("AllowAll",
-        builder =>
-        {
-            builder.AllowAnyOrigin()
-                   .AllowAnyMethod()
-                   .AllowAnyHeader();
-        });
-});
+// ✅ Add logging
+builder.Services.AddLogging();
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline
+// Configure pipeline
 if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
-    app.UseDeveloperExceptionPage();
+    app.UseDeveloperExceptionPage(); // ✅ Shows detailed errors
 }
 
-app.UseSerilogRequestLogging();
 app.UseHttpsRedirection();
-app.UseCors("AllowAll");
 app.UseAuthorization();
-
-// Map controllers
 app.MapControllers();
 
-// Map health checks
-app.MapHealthChecks("/health");
-
-// Initialize Database on Startup
-using (var scope = app.Services.CreateScope())
+// ✅ Simple test endpoint
+app.MapGet("/test", () => Results.Ok(new
 {
-    var services = scope.ServiceProvider;
-    try
-    {
-        var context = services.GetRequiredService<AppDbContext>();
+    message = "API is running",
+    time = DateTime.UtcNow
+}));
 
-        // Apply pending migrations
-        await context.Database.MigrateAsync();
+// ✅ Initialize Database
+try
+{
+    using var scope = app.Services.CreateScope();
+    var context = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    await context.Database.EnsureCreatedAsync(); // ✅ Simpler than Migrate
+    Console.WriteLine("✅ Database initialized");
 
-        Log.Information("Database migrated successfully");
-    }
-    catch (Exception ex)
-    {
-        Log.Fatal(ex, "An error occurred while migrating the database");
-    }
+    // Check if we have products
+    var productCount = await context.Products.CountAsync();
+    Console.WriteLine($"✅ Found {productCount} products in database");
+}
+catch (Exception ex)
+{
+    Console.WriteLine($"❌ Database error: {ex.Message}");
+    if (ex.InnerException != null)
+        Console.WriteLine($"❌ Inner exception: {ex.InnerException.Message}");
 }
 
 app.Run();

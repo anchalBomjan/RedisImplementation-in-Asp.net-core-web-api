@@ -15,7 +15,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("RedisCrudAPI")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8f141779d57c50c46b07421e34e92d71215fa151")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8f71dffc361d36c1de5debcb55f91a96f42c888f")]
 [assembly: System.Reflection.AssemblyProductAttribute("RedisCrudAPI")]
 [assembly: System.Reflection.AssemblyTitleAttribute("RedisCrudAPI")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]
